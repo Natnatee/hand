@@ -30,6 +30,14 @@ is_clicked = False
 last_click_time = 0
 pinch_start_time = None
 
+# --- [Pause Toggle] ---
+paused = False
+thumbs_up_start_time = None
+THUMBS_UP_HOLD_SEC = 2.0
+TOGGLE_COOLDOWN_SEC = 5.0
+toggle_cooldown_until = 0
+# ----------------------
+
 cap = cv2.VideoCapture(0)
 cap.set(3, cam_width)
 cap.set(4, cam_height)
@@ -57,6 +65,55 @@ while cap.isOpened():
     if results.multi_hand_landmarks:
         for hand_landmarks in results.multi_hand_landmarks:
             mp_draw.draw_landmarks(img, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+
+            # === ตรวจจับท่าชูนิ้วโป้ง (Thumbs Up) ===
+            lm = hand_landmarks.landmark
+            thumb_tip = lm[4]
+            # เงื่อนไข 1: ปลายนิ้วโป้งอยู่เหนือทุกจุดในแกน Y
+            all_landmarks_y = [l.y for l in lm]
+            thumb_is_highest = thumb_tip.y <= min(all_landmarks_y) + 0.01
+
+            # เงื่อนไข 2: ปลายนิ้วชี้/กลาง/นาง/ก้อย เข้าใกล้โคนมือ (wrist #0)
+            wrist = lm[0]
+            finger_tips = [lm[8], lm[12], lm[16], lm[20]]
+            fingers_curled = all(
+                math.hypot(ft.x - wrist.x, ft.y - wrist.y) < 0.25
+                for ft in finger_tips
+            )
+
+            is_thumbs_up = thumb_is_highest and fingers_curled
+
+            # เช็ค cooldown หลัง toggle
+            cooldown_left = toggle_cooldown_until - time.time()
+            if cooldown_left > 0:
+                cv2.putText(img, f"COOLDOWN: {cooldown_left:.1f}s", (20, 130),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 140, 255), 2)
+                is_thumbs_up = False  # ไม่ให้ตรวจจับท่าระหว่าง cooldown
+
+            if is_thumbs_up:
+                if thumbs_up_start_time is None:
+                    thumbs_up_start_time = time.time()
+                held = time.time() - thumbs_up_start_time
+                remaining = max(0, THUMBS_UP_HOLD_SEC - held)
+                if held >= THUMBS_UP_HOLD_SEC:
+                    paused = not paused
+                    thumbs_up_start_time = None
+                    toggle_cooldown_until = time.time() + TOGGLE_COOLDOWN_SEC
+                    print(f">>> {'PAUSED' if paused else 'RESUMED'} <<<")
+                    continue
+                else:
+                    cv2.putText(img, f"THUMBS UP: {remaining:.1f}s", (20, 130),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 255), 2)
+            else:
+                thumbs_up_start_time = None
+
+            # ถ้า paused ให้ข้ามการควบคุมเมาส์ทั้งหมด
+            if paused:
+                status = "PAUSED"
+                color = (128, 128, 128)
+                cv2.circle(img, (int(lm[8].x * cam_width), int(lm[8].y * cam_height)),
+                           10, color, cv2.FILLED)
+                continue
 
             # 1. พิกัดนิ้วชี้ (#8)
             index_8 = hand_landmarks.landmark[8]
