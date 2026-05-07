@@ -7,11 +7,6 @@ import time
 import sys
 
 # === เลือก Plugin ตรงนี้ ===
-# รันแบบ Software (เดิม):  python main.py
-# รันแบบ BLE (ESP32):      python main.py ble
-# รันแบบ BLE + ระบุพอร์ต:   python main.py ble COM5
-# ============================
-
 from plugins import SoftwareMouse, BLEMouse
 
 if len(sys.argv) > 1 and sys.argv[1].lower() == 'ble':
@@ -19,6 +14,17 @@ if len(sys.argv) > 1 and sys.argv[1].lower() == 'ble':
     mouse = BLEMouse(port=port)
 else:
     mouse = SoftwareMouse()
+
+# --- [Sensitivity & Smoothing Settings] ---
+# ปรับความไว (ยิ่งตัวเลขมาก เมาส์ยิ่งขยับไกล)
+sensitivity_x = 2.0  
+sensitivity_y = 2.5  
+
+# การหน่วงเมาส์ (ยิ่งมากยิ่งนุ่มแต่จะรู้สึกหน่วงขึ้น)
+smoothening = 5
+ploc_x, ploc_y = 0, 0
+cloc_x, cloc_y = 0, 0
+# ------------------------------------------
 
 # ตั้งค่า MediaPipe
 mp_hands = mp.solutions.hands
@@ -30,15 +36,9 @@ hands = mp_hands.Hands(
 )
 mp_draw = mp.solutions.drawing_utils
 
-# ตั้งค่าหน้าจอและเมาส์
+# ตั้งค่าหน้าจอ
 screen_width, screen_height = pyautogui.size()
 cam_width, cam_height = 640, 480
-
-# --- [Smoothing Settings] ---
-smoothening = 7
-ploc_x, ploc_y = 0, 0
-cloc_x, cloc_y = 0, 0
-# ----------------------------
 
 is_clicked = False
 last_click_time = 0
@@ -50,20 +50,12 @@ thumbs_up_start_time = None
 THUMBS_UP_HOLD_SEC = 2.0
 TOGGLE_COOLDOWN_SEC = 5.0
 toggle_cooldown_until = 0
-# ----------------------
 
 cap = cv2.VideoCapture(0)
 cap.set(3, cam_width)
 cap.set(4, cam_height)
 
-# ============================================================
-# HYBRID AUTO-CALIBRATION: เริ่มต้นปานกลางและขยายตามการขยับมือ
-# ============================================================
-# เริ่มต้นใช้พื้นที่ 60% ของกลางจอกล้อง
-zone_x_min, zone_x_max = 160, 480
-zone_y_min, zone_y_max = 120, 360
-
-print("Starting Hand Mouse (Instant ON)... Press 'q' to quit. Press 'c' to reset zone.")
+print("Starting Hand Mouse (Full Camera Mode)... Press 'q' to quit.")
 
 while cap.isOpened():
     success, img = cap.read()
@@ -80,33 +72,24 @@ while cap.isOpened():
         for hand_landmarks in results.multi_hand_landmarks:
             mp_draw.draw_landmarks(img, hand_landmarks, mp_hands.HAND_CONNECTIONS)
 
-            # === ตรวจจับท่าชูนิ้วโป้ง (Thumbs Up) ===
             lm = hand_landmarks.landmark
+            
+            # === ตรวจจับท่าชูนิ้วโป้ง (Pause/Resume) ===
             thumb_tip = lm[4]
-            # เงื่อนไข 1: ปลายนิ้วโป้งอยู่เหนือทุกจุดในแกน Y
             all_landmarks_y = [l.y for l in lm]
             thumb_is_highest = thumb_tip.y <= min(all_landmarks_y) + 0.01
-
-            # เงื่อนไข 2: ปลายนิ้วชี้/กลาง/นาง/ก้อย เข้าใกล้โคนมือ (wrist #0)
             wrist = lm[0]
             finger_tips = [lm[8], lm[12], lm[16], lm[20]]
-            fingers_curled = all(
-                math.hypot(ft.x - wrist.x, ft.y - wrist.y) < 0.25
-                for ft in finger_tips
-            )
-
+            fingers_curled = all(math.hypot(ft.x - wrist.x, ft.y - wrist.y) < 0.25 for ft in finger_tips)
             is_thumbs_up = thumb_is_highest and fingers_curled
 
-            # เช็ค cooldown หลัง toggle
             cooldown_left = toggle_cooldown_until - time.time()
             if cooldown_left > 0:
-                cv2.putText(img, f"COOLDOWN: {cooldown_left:.1f}s", (20, 130),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 140, 255), 2)
-                is_thumbs_up = False  # ไม่ให้ตรวจจับท่าระหว่าง cooldown
+                cv2.putText(img, f"COOLDOWN: {cooldown_left:.1f}s", (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 140, 255), 2)
+                is_thumbs_up = False
 
             if is_thumbs_up:
-                if thumbs_up_start_time is None:
-                    thumbs_up_start_time = time.time()
+                if thumbs_up_start_time is None: thumbs_up_start_time = time.time()
                 held = time.time() - thumbs_up_start_time
                 remaining = max(0, THUMBS_UP_HOLD_SEC - held)
                 if held >= THUMBS_UP_HOLD_SEC:
@@ -116,32 +99,24 @@ while cap.isOpened():
                     print(f">>> {'PAUSED' if paused else 'RESUMED'} <<<")
                     continue
                 else:
-                    cv2.putText(img, f"THUMBS UP: {remaining:.1f}s", (20, 130),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 255), 2)
+                    cv2.putText(img, f"THUMBS UP: {remaining:.1f}s", (20, 130), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 200, 255), 2)
             else:
                 thumbs_up_start_time = None
 
-            # ถ้า paused ให้ข้ามการควบคุมเมาส์ทั้งหมด
             if paused:
                 status = "PAUSED"
                 color = (128, 128, 128)
-                cv2.circle(img, (int(lm[8].x * cam_width), int(lm[8].y * cam_height)),
-                           10, color, cv2.FILLED)
                 continue
 
-            # 1. พิกัดนิ้วชี้ (#8)
+            color = (0, 255, 0)  # สีเริ่มต้น (เขียว)
+
+            # 1. คำนวณพิกัด (Center-based Mapping)
             index_8 = hand_landmarks.landmark[8]
-            finger_x = index_8.x * cam_width
-            finger_y = index_8.y * cam_height
-
-            # แปลงพิกัด: จาก Calibrated Zone → หน้าจอจริง
-            target_x = np.interp(finger_x, [zone_x_min, zone_x_max], [0, screen_width])
-            target_y = np.interp(finger_y, [zone_y_min, zone_y_max], [0, screen_height])
-
-            # --- [Fixed Zone Logic] ---
-            # ปิดระบบ Auto-Expansion เพื่อให้ Sensitivity คงที่ตามที่ผู้ใช้ต้องการ
-            # หากต้องการให้เมาส์ "ไวขึ้น" ให้บีบค่า zone_x/y ให้แคบลง
-            # --------------------------
+            
+            # อ้างอิงจากจุดศูนย์กลางจอ (0.5, 0.5) และคูณด้วยความไว
+            # สูตร: (ตำแหน่งนิ้ว - 0.5) * ความไว * ขนาดจอ + (ขนาดจอ / 2)
+            target_x = (index_8.x - 0.5) * sensitivity_x * screen_width + (screen_width / 2)
+            target_y = (index_8.y - 0.5) * sensitivity_y * screen_height + (screen_height / 2)
 
             # 2. Smoothing
             cloc_x = ploc_x + (target_x - ploc_x) / smoothening
@@ -150,28 +125,22 @@ while cap.isOpened():
             mouse.move_to(cloc_x, cloc_y)
             ploc_x, ploc_y = cloc_x, cloc_y
 
-            # 3. คลิก (โป้ง #4 แตะโคนนิ้วชี้ #5)
+            # 3. คลิกและท่าทางอื่นๆ
             thumb_4 = hand_landmarks.landmark[4]
             index_5 = hand_landmarks.landmark[5]
             dist = math.hypot(thumb_4.x - index_5.x, thumb_4.y - index_5.y)
             dist_val = round(dist, 3)
 
-            # ตรวจสอบจำนวนนิ้วที่ชูขึ้น (นิ้วชี้, กลาง, นาง, ก้อย)
             index_up = hand_landmarks.landmark[8].y < hand_landmarks.landmark[6].y
             middle_up = hand_landmarks.landmark[12].y < hand_landmarks.landmark[10].y
             ring_up = hand_landmarks.landmark[16].y < hand_landmarks.landmark[14].y
             pinky_up = hand_landmarks.landmark[20].y < hand_landmarks.landmark[18].y
-            
-            # นับจำนวนนิ้วที่ชู (ไม่รวมนิ้วโป้ง)
             finger_count = sum([index_up, middle_up, ring_up, pinky_up])
 
             if dist < 0.05:
-                if pinch_start_time is None:
-                    pinch_start_time = time.time()
-                
+                if pinch_start_time is None: pinch_start_time = time.time()
                 elapsed = time.time() - pinch_start_time
-
-                if finger_count == 1: # โหมดคลิกซ้าย / ลาก
+                if finger_count == 1:
                     if elapsed >= 1.0:
                         if not is_clicked:
                             mouse.mouse_down()
@@ -181,35 +150,29 @@ while cap.isOpened():
                     else:
                         status = f"LEFT PINCH ({1.0 - elapsed:.1f}s)"
                         color = (255, 255, 0)
-                
-                elif finger_count == 2: # โหมดคลิกขวา
+                elif finger_count == 2:
                     if elapsed >= 1.0:
-                        # คลิกขวารัวๆ เมื่อค้างเกิน 1 วิ
                         mouse.right_click()
                         status = "RAPID RIGHT CLICK"
                         color = (255, 0, 0)
                     else:
                         status = f"RIGHT PINCH ({1.0 - elapsed:.1f}s)"
                         color = (0, 255, 255)
-
-                elif finger_count == 3: # โหมดซูมเข้า
-                    mouse.scroll(50)
-                    status = "ZOOMING IN (SCROLL UP)"
+                elif finger_count == 3:
+                    mouse.scroll(30)
+                    status = "SCROLL UP"
                     color = (255, 0, 255)
-                
-                elif finger_count == 4: # โหมดซูมออก
-                    mouse.scroll(-50)
-                    status = "ZOOMING OUT (SCROLL DOWN)"
+                elif finger_count == 4:
+                    mouse.scroll(-30)
+                    status = "SCROLL DOWN"
                     color = (255, 100, 0)
             else:
                 if pinch_start_time is not None:
                     elapsed_pinch = time.time() - pinch_start_time
-                    
-                    if is_clicked: # ปล่อยจากการลากซ้าย
+                    if is_clicked:
                         mouse.mouse_up()
                         is_clicked = False
                     elif elapsed_pinch < 1.0:
-                        # ตัดสินใจว่าจะคลิกซ้ายหรือขวาตามจำนวนนิ้วตอนที่ "ปล่อย"
                         if finger_count == 1:
                             now = time.time()
                             if now - last_click_time < 1.0:
@@ -220,33 +183,18 @@ while cap.isOpened():
                                 last_click_time = now
                         elif finger_count == 2:
                             mouse.right_click()
-
                 pinch_start_time = None
                 status = "MOVING"
                 color = (0, 255, 0)
 
-            # วาด Calibrated Zone (สีชมพู)
-            cv2.rectangle(img,
-                          (int(zone_x_min), int(zone_y_min)),
-                          (int(zone_x_max), int(zone_y_max)),
-                          (255, 0, 255), 2)
-            # วาดจุดนิ้วชี้
-            cv2.circle(img, (int(finger_x), int(finger_y)), 10, color, cv2.FILLED)
-            # วาดจุด thumb
-            cv2.circle(img, (int(thumb_4.x*cam_width), int(thumb_4.y*cam_height)), 8, color, cv2.FILLED)
+            # วาดจุดสถานะ
+            cv2.circle(img, (int(index_8.x * cam_width), int(index_8.y * cam_height)), 10, color, cv2.FILLED)
 
     cv2.putText(img, f"Status: {status}", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-    cv2.putText(img, f"Dist: {dist_val}", (20, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
-    cv2.imshow("Hand Mouse Control", img)
+    cv2.imshow("Hand Mouse Control (No Boundaries)", img)
 
     key = cv2.waitKey(1) & 0xFF
-    if key == ord('q'):
-        break
-    elif key == ord('c'):
-        # รีเซ็ตกรอบสีชมพูใหม่
-        zone_x_min, zone_x_max = 160, 480
-        zone_y_min, zone_y_max = 120, 360
-        print("Zone Reset!")
+    if key == ord('q'): break
 
 mouse.cleanup()
 cap.release()
