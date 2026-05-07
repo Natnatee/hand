@@ -31,8 +31,8 @@ mp_hands = mp.solutions.hands
 hands = mp_hands.Hands(
     static_image_mode=False,
     max_num_hands=1,
-    min_detection_confidence=0.7,
-    min_tracking_confidence=0.5
+    min_detection_confidence=0.6,
+    min_tracking_confidence=0.7
 )
 mp_draw = mp.solutions.drawing_utils
 
@@ -40,9 +40,8 @@ mp_draw = mp.solutions.drawing_utils
 screen_width, screen_height = pyautogui.size()
 cam_width, cam_height = 640, 480
 
-is_clicked = False
+thumb_was_extended = False
 last_click_time = 0
-pinch_start_time = None
 
 # --- [Pause Toggle] ---
 paused = False
@@ -125,69 +124,87 @@ while cap.isOpened():
             mouse.move_to(cloc_x, cloc_y)
             ploc_x, ploc_y = cloc_x, cloc_y
 
-            # 3. คลิกและท่าทางอื่นๆ
-            thumb_4 = hand_landmarks.landmark[4]
-            index_5 = hand_landmarks.landmark[5]
-            dist = math.hypot(thumb_4.x - index_5.x, thumb_4.y - index_5.y)
-            dist_val = round(dist, 3)
+            # 3. ตรวจจับนิ้วโป้งเหยียดตรง (Thumb Straight = Click Trigger)
+            # ใช้มุมของเส้น 2 เส้นบนนิ้วโป้ง:
+            #   เส้น A: tip(4) → ip(3)
+            #   เส้น B: ip(3) → mcp(2)
+            # ถ้าทิศทางของสองเส้นใกล้เคียงกัน (มุมต่างกันน้อย) = เหยียดตรง
+            thumb_tip = hand_landmarks.landmark[4]   # ปลายนิ้วโป้ง
+            thumb_ip  = hand_landmarks.landmark[3]   # ข้อที่ 2
+            thumb_mcp = hand_landmarks.landmark[2]   # ข้อที่ 3
 
-            index_up = hand_landmarks.landmark[8].y < hand_landmarks.landmark[6].y
+            # คำนวณมุมของแต่ละเส้นเทียบกับแกนแนวนอน (องศา)
+            angle_a = math.degrees(math.atan2(thumb_tip.y - thumb_ip.y, thumb_tip.x - thumb_ip.x))
+            angle_b = math.degrees(math.atan2(thumb_ip.y - thumb_mcp.y, thumb_ip.x - thumb_mcp.x))
+
+            # มุมต่างกันระหว่างสองเส้น (ยิ่งน้อย = ยิ่งตรง)
+            angle_diff = abs(angle_a - angle_b)
+            if angle_diff > 180:
+                angle_diff = 360 - angle_diff
+
+            STRAIGHT_THRESHOLD = 15  # องศา (ถ้ามุมต่างกันน้อยกว่านี้ = เหยียดตรง)
+            thumb_is_straight = angle_diff < STRAIGHT_THRESHOLD
+
+            # Debug: แสดงค่ามุมบนจอ
+            dist_val = round(angle_diff, 1)
+            cv2.putText(img, f"Angle: {angle_diff:.1f} deg", (20, 90),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+
+            # วาดเส้นบนนิ้วโป้ง (เพื่อ debug)
+            pt_tip = (int(thumb_tip.x * cam_width), int(thumb_tip.y * cam_height))
+            pt_ip  = (int(thumb_ip.x * cam_width), int(thumb_ip.y * cam_height))
+            pt_mcp = (int(thumb_mcp.x * cam_width), int(thumb_mcp.y * cam_height))
+            line_color = (0, 255, 0) if thumb_is_straight else (0, 0, 255)
+            cv2.line(img, pt_tip, pt_ip, line_color, 3)
+            cv2.line(img, pt_ip, pt_mcp, line_color, 3)
+
+            # นับจำนวนนิ้วที่ชูขึ้น (ไม่รวมนิ้วโป้ง)
+            index_up  = hand_landmarks.landmark[8].y < hand_landmarks.landmark[6].y
             middle_up = hand_landmarks.landmark[12].y < hand_landmarks.landmark[10].y
-            ring_up = hand_landmarks.landmark[16].y < hand_landmarks.landmark[14].y
-            pinky_up = hand_landmarks.landmark[20].y < hand_landmarks.landmark[18].y
+            ring_up   = hand_landmarks.landmark[16].y < hand_landmarks.landmark[14].y
+            pinky_up  = hand_landmarks.landmark[20].y < hand_landmarks.landmark[18].y
             finger_count = sum([index_up, middle_up, ring_up, pinky_up])
 
-            if dist < 0.05:
-                if pinch_start_time is None: pinch_start_time = time.time()
-                elapsed = time.time() - pinch_start_time
-                if finger_count == 1:
-                    if elapsed >= 1.0:
-                        if not is_clicked:
-                            mouse.mouse_down()
-                            is_clicked = True
-                        status = "LEFT DRAGGING"
-                        color = (0, 0, 255)
-                    else:
-                        status = f"LEFT PINCH ({1.0 - elapsed:.1f}s)"
-                        color = (255, 255, 0)
+            if thumb_is_straight:
+                thumb_was_extended = True
+
+                if finger_count <= 1:
+                    # 1 นิ้ว (หรือกำมือ) + เหยียดโป้ง → เตรียมคลิกซ้าย
+                    status = "THUMB: LEFT..."
+                    color = (255, 255, 0)
                 elif finger_count == 2:
-                    if elapsed >= 1.0:
-                        mouse.right_click()
-                        status = "RAPID RIGHT CLICK"
-                        color = (255, 0, 0)
-                    else:
-                        status = f"RIGHT PINCH ({1.0 - elapsed:.1f}s)"
-                        color = (0, 255, 255)
+                    # 2 นิ้ว + เหยียดโป้ง → เตรียมคลิกขวา
+                    status = "THUMB: RIGHT..."
+                    color = (0, 255, 255)
                 elif finger_count == 3:
-                    mouse.scroll(30)
+                    # 3 นิ้ว + เหยียดโป้งค้าง → Scroll ขึ้นทันที (continuous)
+                    mouse.scroll(3)
                     status = "SCROLL UP"
                     color = (255, 0, 255)
                 elif finger_count == 4:
-                    mouse.scroll(-30)
+                    # 4 นิ้ว + เหยียดโป้งค้าง → Scroll ลงทันที (continuous)
+                    mouse.scroll(-3)
                     status = "SCROLL DOWN"
                     color = (255, 100, 0)
             else:
-                if pinch_start_time is not None:
-                    elapsed_pinch = time.time() - pinch_start_time
-                    if is_clicked:
-                        mouse.mouse_up()
-                        is_clicked = False
-                    elif elapsed_pinch < 1.0:
-                        if finger_count == 1:
-                            now = time.time()
-                            if now - last_click_time < 1.0:
-                                mouse.double_click()
-                                last_click_time = 0
-                            else:
-                                mouse.click()
-                                last_click_time = now
+                # นิ้วโป้งงอ/พับกลับ
+                if thumb_was_extended:
+                    # เพิ่งเปลี่ยนจากตรง→งอ = คลิก! (edge trigger)
+                    now = time.time()
+                    if now - last_click_time >= 0.5:  # Debounce 0.5 วิ
+                        if finger_count <= 1:
+                            mouse.click()
+                            status = "LEFT CLICK!"
                         elif finger_count == 2:
                             mouse.right_click()
-                pinch_start_time = None
+                            status = "RIGHT CLICK!"
+                        last_click_time = now
+                        color = (0, 255, 255)
+                thumb_was_extended = False
                 status = "MOVING"
                 color = (0, 255, 0)
 
-            # วาดจุดสถานะ
+            # วาดจุดนิ้วชี้
             cv2.circle(img, (int(index_8.x * cam_width), int(index_8.y * cam_height)), 10, color, cv2.FILLED)
 
     cv2.putText(img, f"Status: {status}", (20, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
