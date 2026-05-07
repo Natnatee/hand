@@ -4,6 +4,21 @@ import pyautogui
 import numpy as np
 import math
 import time
+import sys
+
+# === เลือก Plugin ตรงนี้ ===
+# รันแบบ Software (เดิม):  python main.py
+# รันแบบ BLE (ESP32):      python main.py ble
+# รันแบบ BLE + ระบุพอร์ต:   python main.py ble COM5
+# ============================
+
+from plugins import SoftwareMouse, BLEMouse
+
+if len(sys.argv) > 1 and sys.argv[1].lower() == 'ble':
+    port = sys.argv[2] if len(sys.argv) > 2 else None
+    mouse = BLEMouse(port=port)
+else:
+    mouse = SoftwareMouse()
 
 # ตั้งค่า MediaPipe
 mp_hands = mp.solutions.hands
@@ -18,7 +33,6 @@ mp_draw = mp.solutions.drawing_utils
 # ตั้งค่าหน้าจอและเมาส์
 screen_width, screen_height = pyautogui.size()
 cam_width, cam_height = 640, 480
-pyautogui.PAUSE = 0
 
 # --- [Smoothing Settings] ---
 smoothening = 7
@@ -136,7 +150,7 @@ while cap.isOpened():
             cloc_x = ploc_x + (target_x - ploc_x) / smoothening
             cloc_y = ploc_y + (target_y - ploc_y) / smoothening
 
-            pyautogui.moveTo(cloc_x, cloc_y, _pause=False)
+            mouse.move_to(cloc_x, cloc_y)
             ploc_x, ploc_y = cloc_x, cloc_y
 
             # 3. คลิก (โป้ง #4 แตะโคนนิ้วชี้ #5)
@@ -163,7 +177,7 @@ while cap.isOpened():
                 if finger_count == 1: # โหมดคลิกซ้าย / ลาก
                     if elapsed >= 1.0:
                         if not is_clicked:
-                            pyautogui.mouseDown()
+                            mouse.mouse_down()
                             is_clicked = True
                         status = "LEFT DRAGGING"
                         color = (0, 0, 255)
@@ -174,7 +188,7 @@ while cap.isOpened():
                 elif finger_count == 2: # โหมดคลิกขวา
                     if elapsed >= 1.0:
                         # คลิกขวารัวๆ เมื่อค้างเกิน 1 วิ
-                        pyautogui.rightClick()
+                        mouse.right_click()
                         status = "RAPID RIGHT CLICK"
                         color = (255, 0, 0)
                     else:
@@ -182,12 +196,12 @@ while cap.isOpened():
                         color = (0, 255, 255)
 
                 elif finger_count == 3: # โหมดซูมเข้า
-                    pyautogui.scroll(50)
+                    mouse.scroll(50)
                     status = "ZOOMING IN (SCROLL UP)"
                     color = (255, 0, 255)
                 
                 elif finger_count == 4: # โหมดซูมออก
-                    pyautogui.scroll(-50)
+                    mouse.scroll(-50)
                     status = "ZOOMING OUT (SCROLL DOWN)"
                     color = (255, 100, 0)
             else:
@@ -195,20 +209,20 @@ while cap.isOpened():
                     elapsed_pinch = time.time() - pinch_start_time
                     
                     if is_clicked: # ปล่อยจากการลากซ้าย
-                        pyautogui.mouseUp()
+                        mouse.mouse_up()
                         is_clicked = False
                     elif elapsed_pinch < 1.0:
                         # ตัดสินใจว่าจะคลิกซ้ายหรือขวาตามจำนวนนิ้วตอนที่ "ปล่อย"
                         if finger_count == 1:
                             now = time.time()
                             if now - last_click_time < 1.0:
-                                pyautogui.doubleClick()
+                                mouse.double_click()
                                 last_click_time = 0
                             else:
-                                pyautogui.click()
+                                mouse.click()
                                 last_click_time = now
                         elif finger_count == 2:
-                            pyautogui.rightClick()
+                            mouse.right_click()
 
                 pinch_start_time = None
                 status = "MOVING"
@@ -237,5 +251,6 @@ while cap.isOpened():
         zone_y_min, zone_y_max = 120, 360
         print("Zone Reset!")
 
+mouse.cleanup()
 cap.release()
 cv2.destroyAllWindows()
