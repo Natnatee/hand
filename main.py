@@ -138,13 +138,10 @@ while cap.isOpened():
             target_x = np.interp(finger_x, [zone_x_min, zone_x_max], [0, screen_width])
             target_y = np.interp(finger_y, [zone_y_min, zone_y_max], [0, screen_height])
 
-            # --- [AUTO-EXPANSION Logic] ---
-            # ถ้ามือขยับออกนอกกรอบ ให้กรอบขยายออกเพื่อคุมทั้งหน้าจอคอมได้
-            if finger_x < zone_x_min: zone_x_min = finger_x
-            if finger_x > zone_x_max: zone_x_max = finger_x
-            if finger_y < zone_y_min: zone_y_min = finger_y
-            if finger_y > zone_y_max: zone_y_max = finger_y
-            # ------------------------------
+            # --- [Fixed Zone Logic] ---
+            # ปิดระบบ Auto-Expansion เพื่อให้ Sensitivity คงที่ตามที่ผู้ใช้ต้องการ
+            # หากต้องการให้เมาส์ "ไวขึ้น" ให้บีบค่า zone_x/y ให้แคบลง
+            # --------------------------
 
             # 2. Smoothing
             cloc_x = ploc_x + (target_x - ploc_x) / smoothening
